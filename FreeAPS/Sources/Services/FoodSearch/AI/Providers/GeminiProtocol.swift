@@ -1,0 +1,285 @@
+import Foundation
+
+struct GeminiProtocol: AIProviderProtocol {
+    private let baseURLTemplate = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+
+    let model: GeminiModel
+    let apiKey: String
+
+    var timeoutsConfig: ModelTimeoutsConfig { model.timeoutsConfig }
+
+    var numberOfRetries: Int { 1 }
+
+    func buildRequest(
+        prompt: String,
+        images: [String],
+        responseSchema: AIResponseSchema?,
+        telemetryCallback _: ((String) -> Void)?
+    ) throws -> URLRequest {
+        let baseURL = baseURLTemplate.replacingOccurrences(of: "{model}", with: model.rawValue)
+
+        guard let url = URL(string: "\(baseURL)?key=\(apiKey)") else {
+            throw AIFoodAnalysisError.requestCreationFailed
+        }
+
+        let userTextPart = GeminiPart(text: prompt)
+        let imageParts = images.map {
+            GeminiPart(inline_data: GeminiInlineData(mime_type: "image/jpeg", data: $0))
+        }
+
+        let schema = responseSchema.map { OrderedJSON($0.jsonSchema(dialect: .lenient)) }
+        let geminiRequest = GeminiGenerateContentRequest(
+            contents: [GeminiContent(parts: [userTextPart] + imageParts)],
+            generationConfig: GeminiGenerationConfig(
+                temperature: model.temperature,
+                topP: model.thinkingLevel == nil ? 0.95 : nil,
+                topK: model.thinkingLevel == nil ? 8 : nil,
+                // Thought tokens count against this limit on thinking models, so leave headroom
+                // above the few thousand tokens the JSON answer itself needs.
+                maxOutputTokens: 16000,
+                responseMimeType: responseSchema == nil ? nil : "application/json",
+                // JSON Schema enforced by the API. `responseJsonSchema` is the form every offered model
+                // accepts; the newer `responseFormat.text.schema` is the eventual replacement.
+                responseJsonSchema: schema,
+                thinkingConfig: model.thinkingLevel.map { GeminiThinkingConfig(thinkingLevel: $0) }
+            )
+        )
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        do {
+            request.httpBody = try OrderedJSON.encode(geminiRequest, splicing: [schema])
+        } catch {
+            throw AIFoodAnalysisError.requestCreationFailed
+        }
+        return request
+    }
+
+    func handleErrorResponse(
+        httpResponse: HTTPURLResponse,
+        data: Data,
+        telemetryCallback _: ((String) -> Void)?
+    ) throws {
+        guard httpResponse.statusCode == 200 else {
+            // 503 = overloaded/high demand — transient, retried by AIProviderClient.
+            if httpResponse.statusCode == 503 {
+                debug(.service, "Gemini API \(httpResponse.statusCode): service overloaded")
+                throw AIFoodAnalysisError.serviceUnavailable(provider: "Gemini")
+            }
+            if let apiError = try? JSONDecoder().decode(GeminiErrorResponse.self, from: data) {
+                let message = apiError.error.message
+                let status = apiError.error.status ?? ""
+                debug(.service, "Gemini API error \(httpResponse.statusCode): \(message) [status: \(status)]")
+
+                // Free-Tier-429 genauer einordnen: Googles Meldung enthält
+                // IMMER das Wort "quota" — auch bei der harmlosen
+                // Anfragen-pro-Minute-Drossel. Die quotaId in den Details
+                // unterscheidet Tageslimit (PerDay → harter Fehler) von
+                // Minuten-Drossel (PerMinute → automatisch wiederholen,
+                // Wartezeit aus RetryInfo).
+                if httpResponse.statusCode == 429 {
+                    let details = apiError.error.details ?? []
+                    let quotaIds = details
+                        .flatMap { $0.violations ?? [] }
+                        .compactMap(\.quotaId)
+                    let retryDelay = details
+                        .compactMap(\.retryDelay)
+                        .first
+                        .flatMap { Double($0.trimmingCharacters(in: CharacterSet(charactersIn: "s"))) }
+
+                    let isDailyLimit = quotaIds.contains { $0.localizedCaseInsensitiveContains("PerDay") }
+                    let isMinuteLimit = quotaIds.contains { $0.localizedCaseInsensitiveContains("PerMinute") }
+
+                    if isDailyLimit {
+                        throw AIFoodAnalysisError.quotaExceeded(provider: "Google Gemini")
+                    }
+                    if isMinuteLimit || (retryDelay ?? .infinity) <= 60 {
+                        throw AIFoodAnalysisError.rateLimited(
+                            provider: "Google Gemini",
+                            retryAfter: min(max(retryDelay ?? 15, 5), 60)
+                        )
+                    }
+                }
+
+                if message.localizedCaseInsensitiveContains("quota") ||
+                    message.localizedCaseInsensitiveContains("QUOTA_EXCEEDED") ||
+                    status.localizedCaseInsensitiveContains("QUOTA_EXCEEDED")
+                {
+                    throw AIFoodAnalysisError.quotaExceeded(provider: "Google Gemini")
+                } else if message.localizedCaseInsensitiveContains("RATE_LIMIT_EXCEEDED") ||
+                    message.localizedCaseInsensitiveContains("rate limit") ||
+                    status.localizedCaseInsensitiveContains("RATE_LIMIT_EXCEEDED")
+                {
+                    throw AIFoodAnalysisError.rateLimitExceeded(provider: "Google Gemini")
+                } else if message.localizedCaseInsensitiveContains("PERMISSION_DENIED") ||
+                    message.localizedCaseInsensitiveContains("API_KEY_INVALID") ||
+                    status.localizedCaseInsensitiveContains("PERMISSION_DENIED")
+                {
+                    throw AIFoodAnalysisError
+                        .customError("Invalid Google Gemini API key. Please check your configuration.")
+                } else if message.localizedCaseInsensitiveContains("RESOURCE_EXHAUSTED") ||
+                    status.localizedCaseInsensitiveContains("RESOURCE_EXHAUSTED")
+                {
+                    throw AIFoodAnalysisError.creditsExhausted(provider: "Google Gemini")
+                }
+            } else {
+                debug(.service, "Gemini API error \(httpResponse.statusCode) (response body not decodable as error JSON)")
+            }
+
+            if httpResponse.statusCode == 429 {
+                throw AIFoodAnalysisError.rateLimitExceeded(provider: "Google Gemini")
+            } else if httpResponse.statusCode == 403 {
+                throw AIFoodAnalysisError.quotaExceeded(provider: "Google Gemini")
+            }
+
+            throw AIFoodAnalysisError.apiError(httpResponse.statusCode)
+        }
+
+        guard !data.isEmpty else {
+            debug(.service, "Gemini returned an empty response body")
+            throw AIFoodAnalysisError.invalidResponse
+        }
+    }
+
+    func extractResponse(
+        data: Data,
+        telemetryCallback _: ((String) -> Void)?
+    ) throws -> String {
+        let geminiResponse: GeminiGenerateContentResponse
+        do {
+            geminiResponse = try JSONDecoder().decode(GeminiGenerateContentResponse.self, from: data)
+        } catch {
+            debug(.service, "Failed to decode Gemini response: \(error)\n\(String(decoding: data, as: UTF8.self))")
+            throw AIFoodAnalysisError.responseParsingFailed
+        }
+
+        guard let firstCandidate = geminiResponse.candidates?.first else {
+            debug(.service, "Gemini response contains no candidates: \(String(decoding: data, as: UTF8.self))")
+            throw AIFoodAnalysisError.responseParsingFailed
+        }
+
+        let parts: [GeminiPartResponse] = firstCandidate.content?.parts ?? []
+        let text = parts
+            .compactMap(\.text)
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !text.isEmpty else {
+            debug(
+                .service,
+                "Gemini candidates produced no text content (finishReason: \(firstCandidate.finishReason ?? "nil")): \(String(decoding: data, as: UTF8.self))"
+            )
+            throw AIFoodAnalysisError.responseParsingFailed
+        }
+
+        if firstCandidate.finishReason == "MAX_TOKENS" {
+            let usage = geminiResponse.usageMetadata
+            debug(
+                .service,
+                "Gemini output was cut off at maxOutputTokens (thoughts: \(usage?.thoughtsTokenCount ?? -1), answer: \(usage?.candidatesTokenCount ?? -1), total: \(usage?.totalTokenCount ?? -1)); the JSON is incomplete"
+            )
+            throw AIFoodAnalysisError
+                .customError("The Gemini response was cut off before the analysis was complete. Please try again.")
+        }
+
+        return text
+    }
+}
+
+// Request payload
+private struct GeminiGenerateContentRequest: Encodable {
+    let contents: [GeminiContent]
+    let generationConfig: GeminiGenerationConfig
+}
+
+private struct GeminiContent: Encodable {
+    let parts: [GeminiPart]
+}
+
+private struct GeminiPart: Encodable {
+    let text: String?
+    let inline_data: GeminiInlineData?
+
+    init(text: String) {
+        self.text = text
+        inline_data = nil
+    }
+
+    init(inline_data: GeminiInlineData) {
+        text = nil
+        self.inline_data = inline_data
+    }
+}
+
+private struct GeminiInlineData: Encodable {
+    let mime_type: String
+    let data: String
+}
+
+private struct GeminiGenerationConfig: Encodable {
+    let temperature: Double?
+    let topP: Double?
+    let topK: Int?
+    let maxOutputTokens: Int
+    let responseMimeType: String?
+    let responseJsonSchema: OrderedJSON?
+    let thinkingConfig: GeminiThinkingConfig?
+}
+
+private struct GeminiThinkingConfig: Encodable {
+    let thinkingLevel: String
+}
+
+// Response payload
+private struct GeminiGenerateContentResponse: Decodable {
+    let candidates: [GeminiCandidate]?
+    let usageMetadata: GeminiUsageMetadata?
+}
+
+private struct GeminiUsageMetadata: Decodable {
+    let promptTokenCount: Int?
+    let candidatesTokenCount: Int?
+    let thoughtsTokenCount: Int?
+    let totalTokenCount: Int?
+}
+
+private struct GeminiCandidate: Decodable {
+    let content: GeminiContentResponse?
+    let finishReason: String?
+}
+
+private struct GeminiContentResponse: Decodable {
+    let parts: [GeminiPartResponse]?
+}
+
+private struct GeminiPartResponse: Decodable {
+    let text: String?
+}
+
+// Error payload
+private struct GeminiErrorResponse: Decodable {
+    struct APIError: Decodable {
+        let code: Int?
+        let message: String
+        let status: String?
+        let details: [Detail]?
+    }
+
+    // Aus error.details: QuotaFailure liefert violations[].quotaId
+    // (z. B. "…PerMinutePerProjectPerModel-FreeTier"), RetryInfo liefert
+    // retryDelay (z. B. "21s"). Felder, die der jeweilige Detail-Typ nicht
+    // hat, bleiben nil.
+    struct Detail: Decodable {
+        let retryDelay: String?
+        let violations: [Violation]?
+    }
+
+    struct Violation: Decodable {
+        let quotaId: String?
+    }
+
+    let error: APIError
+}

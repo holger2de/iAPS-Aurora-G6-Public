@@ -1,0 +1,136 @@
+import SwiftUI
+import Swinject
+
+extension UIUX {
+    struct RootView: BaseView {
+        let resolver: Resolver
+        @StateObject var state: StateModel
+
+        init(resolver: Resolver) {
+            self.resolver = resolver
+            _state = StateObject(wrappedValue: StateModel(resolver: resolver))
+        }
+
+        private var glucoseFormatter: NumberFormatter {
+            let formatter = NumberFormatter()
+            formatter.numberStyle = .decimal
+            formatter.maximumFractionDigits = 0
+            if state.units == .mmolL {
+                formatter.maximumFractionDigits = 1
+            }
+            formatter.roundingMode = .halfUp
+            return formatter
+        }
+
+        private var carbsFormatter: NumberFormatter {
+            let formatter = NumberFormatter()
+            formatter.numberStyle = .decimal
+            formatter.maximumFractionDigits = 0
+            return formatter
+        }
+
+        private var insulinFormatter: NumberFormatter {
+            let formatter = NumberFormatter()
+            formatter.numberStyle = .decimal
+            formatter.maximumFractionDigits = 2
+            return formatter
+        }
+
+        var body: some View {
+            Form {
+                Section {
+                    Toggle("Vertical grid lines", isOn: $state.xGridLines)
+                    HStack {
+                        Text("Horizontal Scroll View Visible hours")
+                        Spacer()
+                        DecimalTextField("6", value: $state.hours, formatter: carbsFormatter)
+                    }
+                    Toggle(hubT("uiux.chart.basalRate"), isOn: $state.displayMainChartBasalRate)
+                    Toggle(hubT("uiux.chart.carbs"), isOn: $state.displayChartCarbs)
+                    Toggle(hubT("uiux.chart.boluses"), isOn: $state.displayChartBoluses)
+                    HStack {
+                        Text("Hide the bolus amount strings when amount is under")
+                        Spacer()
+                        DecimalTextField("0.2", value: $state.minimumSMB, formatter: insulinFormatter)
+                        Text("U").foregroundColor(.secondary)
+                    }
+                    Toggle(hubT("uiux.chart.prediction"), isOn: Binding(
+                        get: { !state.hidePredictions },
+                        set: { state.hidePredictions = !$0 }
+                    ))
+                    if !state.hidePredictions {
+                        Toggle(hubT("uiux.chart.predictionCone"), isOn: $state.predictionCone)
+                    }
+                } header: { Text("Main Chart") }
+
+                Section {
+                    /*   Toggle("Display Glucose Delta", isOn: $state.displayDelta)*/
+                    Toggle(hubT("uiux.header.eventualGlucose"), isOn: $state.displayeventualBG)
+                    Toggle(hubT("uiux.header.tempBasal"), isOn: $state.displayTBR)
+                    Toggle("Hide Concentration Badge", isOn: $state.hideInsulinBadge)
+                    Toggle("Display Sensor Age", isOn: $state.displaySAGE)
+                    Toggle("Display Sensor Time Remaining", isOn: $state.displayExpiration)
+                    Toggle(hubT("uiux.header.isfView"), isOn: $state.isfView)
+
+                } header: { Text("Header settings") }
+                    ._onBindingChange($state.displaySAGE) { enabled in
+                        if enabled { state.displayExpiration = false }
+                    }
+                    ._onBindingChange($state.displayExpiration) { enabled in
+                        if enabled { state.displaySAGE = false }
+                    }
+
+                Section {
+                    Toggle(hubT("uiux.tabbar.profile"), isOn: $state.profileButton)
+                    Toggle(hubT("uiux.tabbar.target"), isOn: $state.useTargetButton)
+                } header: { Text(hubT("uiux.tabbar.header")) } footer: {
+                    Text(hubT("uiux.tabbar.footer"))
+                }
+
+                Section {
+                    Toggle(hubT("qb.setting.title"), isOn: $state.enableQuickBolus)
+                } header: { Text(hubT("qb.setting.header")) } footer: {
+                    Text(hubT("qb.setting.footer"))
+                }
+
+                Section {
+                    HStack {
+                        Text("Low")
+                        Spacer()
+                        DecimalTextField("0", value: $state.low, formatter: glucoseFormatter)
+                        Text(state.units.rawValue).foregroundColor(.secondary)
+                    }
+                    HStack {
+                        Text("High")
+                        Spacer()
+                        DecimalTextField("0", value: $state.high, formatter: glucoseFormatter)
+                        Text(state.units.rawValue).foregroundColor(.secondary)
+                    }
+                } header: { Text("Statistics settings ") }
+
+                Section {
+                    Toggle("Skip Bolus screen after carbs", isOn: $state.skipBolusScreenAfterCarbs)
+                    Toggle("Display and allow Fat and Protein entries", isOn: $state.useFPUconversion)
+                    Toggle("AI Food Search", isOn: $state.ai)
+
+                    if state.ai {
+                        Toggle("Don't ask for saving search result as meal preset", isOn: $state.skipSave)
+                    }
+                    Toggle("Allow Meal View Micronutrients and Dietary Fibers entries", isOn: $state.mealViewMicronutrients)
+                } header: { Text("Add Meal View settings ") }
+
+                Section {
+                    Picker(selection: $state.lightMode, label: Text("Color Scheme")) {
+                        ForEach(LightMode.allCases) { item in
+                            Text(NSLocalizedString(item.rawValue, comment: "ColorScheme Selection"))
+                        }
+                    }
+                } header: { Text("Light / Dark Mode") }
+            }
+            .dynamicTypeSize(...DynamicTypeSize.xxLarge)
+            .navigationBarTitle("UI/UX")
+            .navigationBarTitleDisplayMode(.automatic)
+            .navigationBarItems(trailing: Button("Close", action: state.hideModal))
+        }
+    }
+}

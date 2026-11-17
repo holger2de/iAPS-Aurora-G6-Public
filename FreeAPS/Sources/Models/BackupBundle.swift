@@ -1,0 +1,100 @@
+import Foundation
+
+/// Top-level container for the iAPS settings backup file.
+/// Written as `iaps-backup-YYYYMMDD-HHmm.json` either via the share-sheet
+/// (manual export) or into a user-picked external folder (automatic backup).
+/// The file lives outside the app sandbox so it survives a full reinstall.
+struct BackupBundle: Codable, Sendable {
+    static let currentSchemaVersion: Int = 1
+
+    var schemaVersion: Int
+    var createdAt: Date
+    var appVersion: String
+    var appBuild: String
+    var bundleIdentifier: String
+    var includesNightscoutCredentials: Bool
+
+    /// Maps the canonical relative file path (as defined in OpenAPS.Settings /
+    /// OpenAPS.FreeAPS constants) to the parsed JSON content of that file.
+    /// Unknown keys are preserved on roundtrip so the format scales when iAPS
+    /// introduces new settings files.
+    var files: [String: JSONValue]
+
+    /// Nightscout URL/secret read from the Keychain. Only populated when the
+    /// user opted in at backup time. Omitted from JSON when nil.
+    var nightscout: NightscoutCredentials?
+
+    /// User-created override profile presets, captured from Core Data.
+    /// Optional so older bundles (without this section) still decode cleanly.
+    var overridePresets: [BackupOverridePreset]?
+
+    /// User-created meal presets, captured from Core Data. Optional for the
+    /// same reason as overridePresets.
+    var mealPresets: [BackupMealPreset]?
+
+    /// Locally stored thumbnail images for meal presets that use a
+    /// `local://<UUID>` imageURL (captured by the user via camera or photo
+    /// library, see `FoodImageStorageManager`). Keyed by UUID string,
+    /// values are PNG bytes (Codable-Base64-encoded in the bundle JSON).
+    /// External http(s) image URLs don't need to be backed up — they
+    /// re-download on demand after restore.
+    var mealImages: [String: Data]?
+
+    /// UserDefaults-backed configuration (AutoPresets, AI-Hub settings,
+    /// site-rotation selections, food-search preferences — see
+    /// `UserDefaultsBackup.canonicalKeys`). API keys are only present when
+    /// the user opted in via `includesNightscoutCredentials`. Optional so
+    /// older bundles still decode cleanly.
+    var userDefaults: [String: JSONValue]?
+
+    struct NightscoutCredentials: Codable, Sendable {
+        var url: String?
+        var secret: String?
+    }
+}
+
+extension BackupBundle {
+    /// Canonical list of files captured by the BackupService.
+    /// Restore writes back in this order so dependent files stay consistent
+    /// (preferences first, then per-profile values, then UI/presets).
+    static let canonicalFiles: [String] = [
+        OpenAPS.Settings.preferences,
+        OpenAPS.FreeAPS.settings,
+        OpenAPS.Settings.settings,
+        OpenAPS.Settings.basalProfile,
+        OpenAPS.Settings.carbRatios,
+        OpenAPS.Settings.insulinSensitivities,
+        OpenAPS.Settings.bgTargets,
+        OpenAPS.Settings.tempTargets,
+        OpenAPS.Settings.autotune,
+        OpenAPS.Settings.autosense,
+        OpenAPS.Settings.profile,
+        OpenAPS.Settings.pumpProfile,
+        OpenAPS.Settings.model,
+        OpenAPS.Settings.contactTrick,
+        OpenAPS.Settings.autoisf,
+        OpenAPS.FreeAPS.tempTargetsPresets,
+        OpenAPS.FreeAPS.calibrations,
+        OpenAPS.FreeAPS.nutritionProfile,
+        // App-owned 90-day manual-bolus store that drives Quick-Pick Bolus
+        // learning. Independent of the settings/profile files above, so it is
+        // appended last; unlike pumpHistory it survives a reinstall and must
+        // be carried across in the backup.
+        OpenAPS.Monitor.manualBolusHistory,
+        // Hardware-Check: patch/sensor change history with the user's
+        // per-change site entries. Long-term series that only grows on-device
+        // — without the backup it would be gone after a reinstall.
+        AIHubDeviceHealth.patchLogFile,
+        AIHubDeviceHealth.sensorLogFile
+    ]
+
+    /// Suggested filename for a backup taken at the given moment.
+    /// Format: `iaps-backup-YYYYMMDD-HHmm.json` — sortable, no spaces.
+    static func filename(for date: Date = Date()) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone.current
+        formatter.dateFormat = "yyyyMMdd-HHmm"
+        return "iaps-backup-\(formatter.string(from: date)).json"
+    }
+}

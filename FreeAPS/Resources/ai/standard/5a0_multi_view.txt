@@ -1,0 +1,7 @@
+MULTI-ANGLE PHOTO SET:
+This request contains (count) photos of the SAME meal captured from different angles (typically: directly from above at 90°, tilted at ~45°, and from the side).
+  • treat all photos as ONE single meal: identify each distinct food component exactly once — a component appearing in several photos must NOT be counted again.
+  • combine the perspectives into a spatial estimate: derive each component's footprint (covered area) from the top-down view and its height/depth from the tilted and side views, then estimate its volume.
+  • derive the portion weight from the estimated volume and the typical density of the food in its prepared form.
+  • if an object of known size is visible (cutlery, plate, credit card, coin, glass), use it as a scale reference consistently across all photos.
+  • if the photos contradict each other (apparently different meals, or components only visible in one photo), base the estimate on the most complete view and explicitly state the uncertainty.

@@ -1,0 +1,70 @@
+import Combine
+import Photos
+import SwiftUI
+
+enum FoodSearchRoute {
+    case camera
+    case multiAngleCamera
+    case barcodeScanner
+    case aiProgress
+    case imageCommentInput([UIImage])
+    case voiceInput
+
+    var fullScreenRoute: FoodSearchFullScreenRoute? {
+        switch self {
+        case .camera: .camera
+        case .multiAngleCamera: .multiAngleCamera
+        case .aiProgress: .aiProgress
+        case .barcodeScanner: .barcodeScanner
+        case .voiceInput: .voiceInput
+        case .imageCommentInput: nil
+        }
+    }
+
+    var sheetRoute: FoodSearchSheetRoute? {
+        switch self {
+        case .camera: nil
+        case .multiAngleCamera: nil
+        case .aiProgress: nil
+        case .barcodeScanner: nil
+        case .voiceInput: nil
+        case let .imageCommentInput(images): .imageCommentInput(images)
+        }
+    }
+}
+
+enum FoodSearchFullScreenRoute: Identifiable {
+    case camera
+    case multiAngleCamera
+    case barcodeScanner
+    case aiProgress
+    case voiceInput
+
+    var id: FoodSearchFullScreenRoute { self }
+
+    var route: FoodSearchRoute {
+        switch self {
+        case .camera: .camera
+        case .multiAngleCamera: .multiAngleCamera
+        case .barcodeScanner: .barcodeScanner
+        case .aiProgress: .aiProgress
+        case .voiceInput: .voiceInput
+        }
+    }
+}
+
+enum FoodSearchSheetRoute: Identifiable {
+    case imageCommentInput([UIImage])
+
+    var id: String {
+        switch self {
+        case .imageCommentInput: return "imageCommentInput"
+        }
+    }
+
+    var route: FoodSearchRoute {
+        switch self {
+        case let .imageCommentInput(images): .imageCommentInput(images)
+        }
+    }
+}

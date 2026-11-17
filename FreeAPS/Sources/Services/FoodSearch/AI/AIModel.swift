@@ -1,0 +1,430 @@
+import Foundation
+
+enum AIConfidenceLevel: String, JSON {
+    case high
+    case medium
+    case low
+}
+
+extension AIConfidenceLevel {
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+
+        // Try to decode numeric confidence first
+        if let numeric = try? container.decode(Double.self) {
+            if numeric >= 0.8 {
+                self = .high
+            } else if numeric >= 0.5 {
+                self = .medium
+            } else {
+                self = .low
+            }
+            return
+        }
+
+        // Fallback to string-based confidence values
+        if let stringValue = try? container.decode(String.self) {
+            switch stringValue.lowercased() {
+            case "high":
+                self = .high
+            case "medium":
+                self = .medium
+            case "low":
+                self = .low
+            default:
+                // Attempt to parse numeric from string
+                if let numericFromString = Double(stringValue) {
+                    if numericFromString >= 0.8 {
+                        self = .high
+                    } else if numericFromString >= 0.5 {
+                        self = .medium
+                    } else {
+                        self = .low
+                    }
+                } else {
+                    self = .medium // Default confidence
+                }
+            }
+            return
+        }
+
+        // Default if neither numeric nor string could be decoded
+        self = .medium
+    }
+}
+
+enum ImageAnalysisType: String, JSON, Identifiable, CaseIterable {
+    case foodPhoto = "food_photo"
+    case menuPhoto = "menu_photo"
+    case recipePhoto = "recipe_photo"
+
+    var id: ImageAnalysisType { self }
+}
+
+struct AnalysiedFoodItem: Identifiable {
+    let id = UUID()
+    let name: String
+    let standardName: String?
+    let confidence: AIConfidenceLevel?
+    let brand: String?
+    let portionEstimateSize: Decimal?
+    let standardServing: String?
+    let standardServingSize: Decimal?
+    let units: MealUnits?
+    let preparationMethod: String?
+    let visualCues: String?
+    let glycemicIndex: Decimal?
+    let caloriesPer100: Decimal?
+    let carbsPer100: Decimal?
+    let fatPer100: Decimal?
+    let fiberPer100: Decimal?
+    let proteinPer100: Decimal?
+    let sugarsPer100: Decimal?
+    let micronutrient: [MicronutrientValue]
+
+    let assessmentNotes: String?
+}
+
+extension AnalysiedFoodItem: Decodable {
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let dynamicContainer = try decoder.container(keyedBy: DynamicCodingKey.self)
+
+        let name = try container.decodeTrimmedIfPresent(forKey: .name) ?? "Food item"
+        let standardName = try container.decodeTrimmedIfPresent(forKey: .standardName)
+        let confidence: AIConfidenceLevel = try container.decode(AIConfidenceLevel.self, forKey: .confidence)
+        let brand = try container.decodeTrimmedIfPresent(forKey: .brand)
+        let standardServing = try container.decodeTrimmedIfPresent(forKey: .standardServing)
+        let standardServingSize = try container.decodeNumberIfPresent(forKey: .standardServingSize)
+        let portionEstimateSize = try container.decodeNumberIfPresent(forKey: .portionEstimateSize) ?? standardServingSize
+        let units = try container.decodeIfPresent(MealUnits.self, forKey: .units) ?? .grams
+        let preparationMethod = try container.decodeTrimmedIfPresent(forKey: .preparationMethod)
+        let visualCues = try container.decodeTrimmedIfPresent(forKey: .visualCues)
+        let glycemicIndex = try container.decodeNumberIfPresent(forKey: .glycemicIndex)
+        let carbsPer100 = try container.decodeNumberIfPresent(forKey: .carbsPer100)
+        let caloriesPer100 = try container.decodeNumberIfPresent(forKey: .caloriesPer100)
+        let fatPer100 = try container.decodeNumberIfPresent(forKey: .fatPer100)
+        let fiberPer100 = try container.decodeNumberIfPresent(forKey: .fiberPer100)
+        let proteinPer100 = try container.decodeNumberIfPresent(forKey: .proteinPer100)
+        let sugarsPer100 = try container.decodeNumberIfPresent(forKey: .sugarsPer100)
+        var micronutrient: [MicronutrientValue] = []
+
+        // To Do: refactor
+        for nutrient in MicroNutrient.allCases {
+            if var key = DynamicCodingKey(stringValue: nutrient.codingKey) {
+                if let per100 = try dynamicContainer.decodeNumberIfPresent(forKey: key) {
+                    var amount: Decimal
+
+                    if let portion = portionEstimateSize, portion > 0 {
+                        amount = per100 / 100 * portion
+                    } else {
+                        amount = per100
+                    }
+
+                    micronutrient.append(
+                        MicronutrientValue(
+                            substance: nutrient,
+                            amount: amount,
+                            amountPer100: per100
+                        )
+                    )
+                }
+            }
+        }
+
+        let assessmentNotes = try container.decodeTrimmedIfPresent(forKey: .assessmentNotes)
+
+        self.name = name
+        self.standardName = standardName
+        self.confidence = confidence
+        self.brand = brand
+        self.portionEstimateSize = portionEstimateSize
+        self.standardServing = standardServing
+        self.standardServingSize = standardServingSize
+        self.units = units
+        self.preparationMethod = preparationMethod
+        self.visualCues = visualCues
+        self.glycemicIndex = glycemicIndex
+        self.caloriesPer100 = caloriesPer100
+        self.carbsPer100 = carbsPer100
+        self.fatPer100 = fatPer100
+        self.fiberPer100 = fiberPer100
+        self.proteinPer100 = proteinPer100
+        self.sugarsPer100 = sugarsPer100
+        self.assessmentNotes = assessmentNotes
+        self.micronutrient = micronutrient
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case name
+        case standardName = "standard_name"
+        case confidence
+        case brand
+        case portionEstimateSize = "portion_estimate_size"
+        case standardServing = "standard_serving"
+        case standardServingSize = "standard_serving_size"
+        case units
+        case preparationMethod = "preparation_method"
+        case visualCues = "visual_cues"
+        case glycemicIndex = "glycemic_index"
+        case caloriesPer100 = "calories_per_100"
+        case carbsPer100 = "carbs_per_100"
+        case fatPer100 = "fat_per_100"
+        case fiberPer100 = "fiber_per_100"
+        case proteinPer100 = "protein_per_100"
+        case sugarsPer100 = "sugars_per_100"
+
+        case assessmentNotes = "assessment_notes"
+    }
+
+    private static var micronutrientFields: [AISchemaField] {
+        MicroNutrient.allCases.map {
+            AISchemaField($0.codingKey, .number, "decimal, \($0.displayName) per 100g/ml")
+        }
+    }
+}
+
+extension AnalysiedFoodItem {
+    private static var fields: [AISchemaField] {
+        [
+            AISchemaField(CodingKeys.name.rawValue, .string, required: true, "string, required; specific food name; (language)"),
+            AISchemaField(
+                CodingKeys.standardName.rawValue,
+                .string,
+                "string; concise image-search query for this product. Branded/menu item: include the brand + product name. Generic food: use only the common product name. Use only nouns, plus an optional color. Do not use any other adjectives. Never include rawness, doneness, peel/skin state, serving style, cut form, or texture."
+            ),
+            AISchemaField(
+                CodingKeys.confidence.rawValue,
+                .number,
+                required: true,
+                "decimal 0 to 1; required; confidence for this item"
+            ),
+            AISchemaField(
+                CodingKeys.units.rawValue,
+                .enumeration([MealUnits.grams.rawValue, MealUnits.milliliters.rawValue]),
+                required: true,
+                "string enum; one of: 'grams' or 'milliliters'; as appropriate for this meal; do NOT translate;"
+            ),
+            AISchemaField(
+                CodingKeys.carbsPer100.rawValue,
+                .number,
+                "decimal, grams of available / digestible carbohydrates per 100 grams or milliliters"
+            ),
+            AISchemaField(CodingKeys.fatPer100.rawValue, .number, "decimal, grams of fat per 100 grams or milliliters"),
+            AISchemaField(CodingKeys.fiberPer100.rawValue, .number, "decimal, grams of fiber per 100 grams or milliliters"),
+            AISchemaField(CodingKeys.proteinPer100.rawValue, .number, "decimal, grams of protein per 100 grams or milliliters"),
+            AISchemaField(CodingKeys.sugarsPer100.rawValue, .number, "decimal, grams of sugars per 100 grams or milliliters"),
+            AISchemaField(
+                CodingKeys.portionEstimateSize.rawValue,
+                .number,
+                "decimal, exact size of the identified portion; in grams or milliliters; do not include unit"
+            ),
+            AISchemaField(
+                CodingKeys.standardServingSize.rawValue,
+                .number,
+                "decimal, the identified standard serving size in grams or milliliters, if available; do not include unit"
+            ),
+            AISchemaField(
+                CodingKeys.standardServing.rawValue,
+                .string,
+                "description of the identified standard serving, if available; if natural description is available - do NOT add size in grams/milliliters; (language)"
+            ),
+            AISchemaField(CodingKeys.glycemicIndex.rawValue, .number, "decimal, glycemic index if available")
+        ]
+    }
+
+    static var schemaVisual: AISchemaObject {
+        AISchemaObject(fields: fields + [
+            AISchemaField(CodingKeys.visualCues.rawValue, .string, "visual elements analyzed; (language)"),
+            AISchemaField(CodingKeys.preparationMethod.rawValue, .string, "cooking details observed; (language)"),
+            AISchemaField(
+                CodingKeys.assessmentNotes.rawValue,
+                .string,
+                "brief note (one or two sentences) on the estimated portion size and the visual references used; (language)"
+            )
+        ] + micronutrientFields)
+    }
+
+    static var schemaText: AISchemaObject {
+        AISchemaObject(fields: fields + [
+            AISchemaField(
+                CodingKeys.assessmentNotes.rawValue,
+                .string,
+                "brief note (one or two sentences) on the estimated portion size and the references used; (language)"
+            )
+        ] + micronutrientFields)
+    }
+}
+
+struct AIAnalysisResult: Identifiable, Equatable {
+    let id = UUID()
+    let imageType: ImageAnalysisType?
+    let foodItems: [AnalysiedFoodItem]
+    let briefDescription: String?
+    let overallDescription: String?
+    let diabetesConsiderations: String?
+
+    static func == (lhs: AIAnalysisResult, rhs: AIAnalysisResult) -> Bool {
+        lhs.id == rhs.id
+    }
+}
+
+extension AIAnalysisResult: Decodable {
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let imageType: ImageAnalysisType? = try container
+            .decodeIfPresent(ImageAnalysisType.self, forKey: .imageType) ?? .foodPhoto
+
+        let foodItems: [AnalysiedFoodItem]
+        if let items = try? container.decode(
+            [AnalysiedFoodItem].self,
+            forKey: .foodItems
+        ) {
+            foodItems = items
+        } else {
+            let singleItem = try container.decode(
+                AnalysiedFoodItem.self,
+                forKey: .foodItems
+            )
+            foodItems = [singleItem]
+        }
+
+        let briefDescription: String? = try container.decodeTrimmedIfPresent(forKey: .briefDescription)
+        let overallDescription: String? = try container.decodeTrimmedIfPresent(forKey: .overallDescription)
+
+        let diabetesConsiderations: String? = try container.decodeTrimmedIfPresent(forKey: .diabetesConsiderations)
+
+        self.imageType = imageType
+        self.foodItems = foodItems
+        self.briefDescription = briefDescription
+        self.overallDescription = overallDescription
+        self.diabetesConsiderations = diabetesConsiderations
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case imageType = "image_type"
+        case foodItems = "food_items"
+        case briefDescription = "brief_description"
+        case overallDescription = "overall_description"
+        case diabetesConsiderations = "diabetes_considerations"
+    }
+}
+
+extension AIAnalysisResult {
+    private static var fields: [AISchemaField] {
+        [
+            AISchemaField(
+                CodingKeys.briefDescription.rawValue,
+                .string,
+                "generate a SHORT UI TITLE describing the analyzed food; (language)"
+            ),
+            AISchemaField(
+                CodingKeys.diabetesConsiderations.rawValue,
+                .string,
+                "carb sources, GI impact (low/medium/high), timing considerations; (language)"
+            )
+        ]
+    }
+
+    static var schemaVisual: AISchemaObject {
+        AISchemaObject(fields: [
+            AISchemaField(
+                CodingKeys.imageType.rawValue,
+                .enumeration(ImageAnalysisType.allCases.map(\.rawValue)),
+                required: true,
+                "string enum: food_photo or menu_photo or recipe_photo"
+            ),
+            AISchemaField(CodingKeys.foodItems.rawValue, .array(AnalysiedFoodItem.schemaVisual), required: true, ""),
+            AISchemaField(CodingKeys.overallDescription.rawValue, .string, "describe what you see on the photo; (language)")
+        ] + fields)
+    }
+
+    static var schemaText: AISchemaObject {
+        AISchemaObject(fields: [
+            AISchemaField(CodingKeys.foodItems.rawValue, .array(AnalysiedFoodItem.schemaText), required: true, ""),
+            AISchemaField(
+                CodingKeys.overallDescription.rawValue,
+                .string,
+                "describe what you perceived from the user input; (language)"
+            )
+        ] + fields)
+    }
+}
+
+// MARK: decoding helpers
+
+private extension KeyedDecodingContainer {
+    func decodeTrimmedNonEmpty(forKey key: Key) throws -> String {
+        let raw = try decode(String.self, forKey: key)
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw DecodingError.dataCorruptedError(
+                forKey: key,
+                in: self,
+                debugDescription: "Expected non-empty string after trimming."
+            )
+        }
+        return trimmed
+    }
+
+    func decodeTrimmedIfPresent(forKey key: Key) throws -> String? {
+        guard let raw = try decodeIfPresent(String.self, forKey: key) else { return nil }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    func decodeNumber(forKey key: Key, ensuringNonNegative: Bool = true) throws -> Decimal {
+        // Try Double directly
+        if let double = try? decode(Decimal.self, forKey: key) {
+            return ensuringNonNegative ? max(0, double) : double
+        }
+        // Try Int and convert
+        if let intVal = try? decode(Int.self, forKey: key) {
+            let converted = Decimal(intVal)
+            return ensuringNonNegative ? max(0, converted) : converted
+        }
+        // Try String and convert
+        if let stringVal = try? decode(String.self, forKey: key) {
+            let trimmed = stringVal.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let parsed = Decimal(from: trimmed) {
+                return ensuringNonNegative ? max(0, parsed) : parsed
+            }
+            throw DecodingError.dataCorruptedError(
+                forKey: key,
+                in: self,
+                debugDescription: "String value for key \(key.stringValue) is not a valid Double: \(stringVal)"
+            )
+        }
+        // If value is explicitly null or not present, surface a missing value error
+        throw DecodingError.keyNotFound(
+            key,
+            DecodingError.Context(
+                codingPath: codingPath,
+                debugDescription: "No convertible numeric value found for key \(key.stringValue)"
+            )
+        )
+    }
+
+    /// Decode a numeric value if present. Accepts Double, Int, or String representations.
+    /// Optionally clamps negatives to 0.
+    func decodeNumberIfPresent(forKey key: Key, ensuringNonNegative: Bool = true) throws -> Decimal? {
+        // If the key is not present at all, return nil early
+        if contains(key) == false { return nil }
+
+        if let double = try? decode(Decimal.self, forKey: key) {
+            return ensuringNonNegative ? max(0, double) : double
+        }
+        if let intVal = try? decode(Int.self, forKey: key) {
+            let converted = Decimal(intVal)
+            return ensuringNonNegative ? max(0, converted) : converted
+        }
+        if let stringVal = try? decode(String.self, forKey: key) {
+            let trimmed = stringVal.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let parsed = Decimal(from: trimmed) {
+                return ensuringNonNegative ? max(0, parsed) : parsed
+            }
+            return nil
+        }
+        return nil
+    }
+}

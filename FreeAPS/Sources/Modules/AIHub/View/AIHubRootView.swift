@@ -1,0 +1,266 @@
+import SwiftUI
+import Swinject
+
+extension AIHub {
+    struct RootView: BaseView {
+        let resolver: Resolver
+        @StateObject var state: StateModel
+
+        @Environment(\.colorScheme) private var colorScheme
+
+        init(resolver: Resolver) {
+            self.resolver = resolver
+            _state = StateObject(wrappedValue: StateModel(resolver: resolver))
+        }
+
+        var body: some View {
+            ScrollView {
+                VStack(spacing: 24) {
+                    header
+                    VStack(spacing: 12) {
+                        ForEach(Feature.allCases) { feature in
+                            NavigationLink(destination: destination(for: feature)) {
+                                FeatureCard(feature: feature)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    medicalDisclaimer
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 24)
+                .padding(.bottom, 32)
+            }
+            .background(
+                Color(colorScheme == .dark ? .systemBackground : .secondarySystemBackground)
+                    .ignoresSafeArea()
+            )
+            .navigationTitle(hubT("aur.hub.title"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        // Deterministisch übers Router-Modal schließen (wie
+                        // Bolus/AddCarbs) — Environment-dismiss brauchte im
+                        // Sheet-NavigationView teils mehrere Taps.
+                        state.hideModal()
+                    } label: {
+                        Image(systemName: "chevron.left")
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    NavigationLink(destination: AIHubSettingsView()) {
+                        Image(systemName: "gearshape")
+                    }
+                }
+            }
+        }
+
+        @ViewBuilder private func destination(for feature: Feature) -> some View {
+            switch feature {
+            case .chat:
+                AIHubChatView()
+            case .mealSim:
+                AIHubMealSimView(onApplyMeal: { carbs, fat, protein, note in
+                    // Mahlzeit in den offiziellen AddCarbs-/Bolus-Flow übergeben:
+                    // Werte vorbelegen, dann das Modal öffnen. Der offizielle
+                    // Bolus-Screen rechnet & bestätigt die Abgabe selbst.
+                    AddCarbs.pendingPrefill = AddCarbs.Prefill(
+                        carbs: carbs,
+                        fat: fat,
+                        protein: protein,
+                        note: note
+                    )
+                    state.showModal(for: .addCarbs(editMode: false, override: false, mode: .meal))
+                })
+            case .therapyInsights:
+                AIHubTherapyInsightsView()
+            case .recap:
+                AIHubRecapView()
+            case .settingsAudit:
+                AIHubSettingsAuditView()
+            case .hypoForensics:
+                AIHubHypoForensicsView()
+            case .doctorReport:
+                AIHubDoctorReportView()
+            case .deviceHealth:
+                AIHubDeviceHealthView()
+            case .presetDesigner:
+                AIHubPresetDesignerView()
+            case .autoPresets:
+                AIHubAutoPresetsView()
+            }
+        }
+
+        private var medicalDisclaimer: some View {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Image(systemName: "cross.case")
+                        .font(.subheadline)
+                        .foregroundStyle(.red)
+                    Text(hubT("root.disclaimer.title"))
+                        .font(.footnote.bold())
+                }
+                Text(hubT("root.disclaimer.text"))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Color.red.opacity(colorScheme == .dark ? 0.12 : 0.06))
+            )
+        }
+
+        private var header: some View {
+            VStack(spacing: 10) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 40, weight: .medium))
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [Color.purple, Color.blue],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                Text(hubT("aur.hub.title"))
+                    .font(.largeTitle.bold())
+                Text(hubT("root.subtitle"))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.top, 12)
+        }
+    }
+
+    // MARK: - Feature card
+
+    private struct FeatureCard: View {
+        let feature: Feature
+
+        @Environment(\.colorScheme) private var colorScheme
+
+        var body: some View {
+            HStack(spacing: 14) {
+                Image(systemName: feature.icon)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 44, height: 44)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(feature.tint.gradient)
+                    )
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text(feature.title)
+                            .font(.headline)
+                            .foregroundStyle(.primary)
+                        // Kennzeichnet Features, die ein KI-Modell aufrufen
+                        // (Therapy Insights rechnet rein deterministisch).
+                        if feature.usesAI {
+                            Image(systemName: "sparkles")
+                                .font(.caption)
+                                .foregroundStyle(.purple)
+                        }
+                    }
+                    Text(feature.subtitle)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(16)
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(Color(colorScheme == .dark ? .secondarySystemBackground : .systemBackground))
+            )
+        }
+    }
+}
+
+private extension AIHub.Feature {
+    var title: String {
+        switch self {
+        case .chat: return hubT("aur.card.chat")
+        case .mealSim: return hubT("sim.title")
+        case .therapyInsights: return hubT("aur.card.insights")
+        case .recap: return hubT("aur.card.recap")
+        case .settingsAudit: return "Loop Check"
+        case .hypoForensics: return hubT("hf.title")
+        case .doctorReport: return hubT("dr.title")
+        case .deviceHealth: return hubT("dh.title")
+        case .presetDesigner: return hubT("aur.card.preset")
+        case .autoPresets: return hubT("aur.card.auto")
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .chat: return hubT("root.card.chat.sub")
+        case .mealSim: return hubT("root.card.sim.sub")
+        case .therapyInsights: return hubT("root.card.insights.sub")
+        case .recap: return hubT("root.card.recap.sub")
+        case .settingsAudit: return hubT("root.card.audit.sub")
+        case .hypoForensics: return hubT("root.card.hypo.sub")
+        case .doctorReport: return hubT("root.card.report.sub")
+        case .deviceHealth: return hubT("root.card.device.sub")
+        case .presetDesigner: return hubT("root.card.preset.sub")
+        case .autoPresets: return hubT("root.card.auto.sub")
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .chat: return "bubble.left.and.bubble.right.fill"
+        case .mealSim: return "wand.and.stars"
+        case .therapyInsights: return "chart.line.uptrend.xyaxis"
+        case .recap: return "calendar.badge.clock"
+        case .settingsAudit: return "checkmark.shield.fill"
+        case .hypoForensics: return "text.magnifyingglass"
+        case .doctorReport: return "doc.text.fill"
+        case .deviceHealth: return "sensor.tag.radiowaves.forward.fill"
+        case .presetDesigner: return "slider.horizontal.3"
+        case .autoPresets: return "figure.walk.motion"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .chat: return .purple
+        case .mealSim: return .orange
+        case .therapyInsights: return .blue
+        case .recap: return .indigo
+        case .settingsAudit: return .green
+        case .hypoForensics: return .red
+        case .doctorReport: return .cyan
+        case .deviceHealth: return .mint
+        case .presetDesigner: return .pink
+        case .autoPresets: return .teal
+        }
+    }
+
+    /// Features, die tatsächlich ein KI-Modell aufrufen — Therapy Insights
+    /// und AutoPresets bleiben bewusst ohne Sparkles (deterministisch bzw.
+    /// rein sensorgesteuert).
+    var usesAI: Bool {
+        switch self {
+        case .chat,
+             .deviceHealth,
+             .doctorReport,
+             .hypoForensics,
+             .mealSim,
+             .presetDesigner,
+             .recap,
+             .settingsAudit: return true
+        case .autoPresets,
+             .therapyInsights: return false
+        }
+    }
+}

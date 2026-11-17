@@ -1,0 +1,846 @@
+import ActivityKit
+import Charts
+import SwiftUI
+import WidgetKit
+
+enum LiveActivitySize {
+    case minimal
+    case compact
+    case expanded
+}
+
+struct LiveActivity: Widget {
+    var body: some WidgetConfiguration {
+        let config = ActivityConfiguration(for: LiveActivityAttributes.self) { context in
+            // Lock screen/banner UI goes here
+            LiveActivityBannerWrapper(context: context)
+        } dynamicIsland: { context in
+            DynamicIsland {
+                // Expanded UI goes here.  Compose the expanded UI through
+                // various regions, like leading/trailing/center/bottom
+                DynamicIslandExpandedRegion(.leading) {
+                    HStack {
+                        LoopCircle(context: context, compact: false, size: 23)
+                    }.padding(10)
+                }
+
+                DynamicIslandExpandedRegion(.center) {
+                    VStack(spacing: 0) {
+                        HStack {
+                            iob(context: context, size: .expanded)
+                                .font(.title2)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.75)
+                                .padding(.leading, 10)
+                            Spacer()
+                            cob(context: context, size: .expanded)
+                                .font(.title2)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.75)
+                                .padding(10)
+                        }
+                        HStack {
+                            bgAndTrend(context: context, size: .expanded).0
+                                .font(.title2)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.75)
+                                .padding(.leading, 10)
+                            Spacer()
+                            changeLabel(context: context)
+                                .font(.title2)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.75)
+                                .padding(10)
+                        }
+                    }
+                }
+
+                DynamicIslandExpandedRegion(.trailing) {
+                    TimestampLabel(context: context)
+                        .font(.caption)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                        .padding(.trailing, 10)
+                }
+                DynamicIslandExpandedRegion(.bottom) {}
+            } compactLeading: {
+                if #available(iOS 27.0, *) {
+                    DynamicIslandCompactLeadingViewIOS27(context: context)
+                } else {
+                    DynamicIslandCompactGlucoseView(context: context, showsTrend: true)
+                }
+            } compactTrailing: {
+                if #available(iOS 27.0, *) {
+                    DynamicIslandCompactTrailingViewIOS27(context: context)
+                } else {
+                    changeLabel(context: context)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                        .padding(.trailing, 4)
+                }
+            } minimal: {
+                DynamicIslandMinimalGlucoseView(context: context)
+            }
+            .widgetURL(URL(string: "freeaps-x://"))
+            // .keylineTint(Color.purple)
+            .contentMargins(.horizontal, 0, for: .minimal)
+        }
+
+        if #available(iOS 18.0, *) {
+            return config.supplementalActivityFamilies([.small, .medium])
+        } else {
+            return config
+        }
+    }
+
+    @ViewBuilder private func changeLabel(context: ActivityViewContext<LiveActivityAttributes>) -> some View {
+        if !context.state.change.isEmpty {
+            if !context.isStale {
+                Text(context.state.change)
+            } else {
+                Text("old").foregroundStyle(.secondary)
+            }
+        } else {
+            Text("--")
+        }
+    }
+
+    private func bgAndTrend(context: ActivityViewContext<LiveActivityAttributes>, size: LiveActivitySize) -> (some View, Int) {
+        var characters = 0
+
+        let bgText = context.state.bg
+        characters += bgText.count
+
+        // narrow mode is for the minimal dynamic island view
+        // there is not enough space to show all three arrow there
+        // and everything has to be squeezed together to some degree
+        // only display the first arrow character and make it red in case there were more characters
+        var directionText: String?
+        var warnColor: Color?
+        if let direction = context.state.direction {
+            if size == .compact {
+                directionText = String(direction[direction.startIndex ... direction.startIndex])
+
+                if direction.count > 1 {
+                    warnColor = Color.red
+                }
+            } else {
+                directionText = direction
+            }
+
+            characters += directionText!.count
+        }
+
+        let spacing: CGFloat
+        switch size {
+        case .minimal: spacing = -1
+        case .compact: spacing = 0
+        case .expanded: spacing = 3
+        }
+
+        let stack = HStack(spacing: spacing) {
+            Text(bgText)
+
+            if let direction = directionText {
+                let text = Text(direction)
+                switch size {
+                case .minimal:
+                    let scaledText = text.scaleEffect(x: 0.7, y: 0.7, anchor: .leading)
+                    if let warnColor {
+                        scaledText.foregroundStyle(warnColor)
+                    } else {
+                        scaledText
+                    }
+                case .compact:
+                    text.scaleEffect(x: 0.8, y: 0.8, anchor: .leading).padding(.trailing, -3)
+
+                case .expanded:
+                    text.scaleEffect(x: 0.7, y: 0.7, anchor: .center).padding(.trailing, -5)
+                }
+            }
+        }
+        return (stack, characters)
+    }
+
+    private func iob(context: ActivityViewContext<LiveActivityAttributes>, size _: LiveActivitySize) -> some View {
+        HStack(spacing: 0) {
+            Text(context.state.iob)
+            Text(" U")
+        }
+        .foregroundStyle(.insulin)
+    }
+
+    private func cob(context: ActivityViewContext<LiveActivityAttributes>, size _: LiveActivitySize) -> some View {
+        HStack(spacing: 0) {
+            Text(context.state.cob)
+            Text(" g")
+        }
+        .foregroundStyle(.loopYellow)
+    }
+}
+
+extension Color {
+    static let uam = Color("UAM")
+    static let zt = Color("ZT")
+}
+
+private struct LiveActivityBannerWrapper: View {
+    let context: ActivityViewContext<LiveActivityAttributes>
+
+    var body: some View {
+        if #available(iOS 18.0, *) {
+            LiveActivityBannerWrapperIOS18(context: context)
+        } else {
+            if context.state.showChart {
+                LiveActivityChart(context: context, isWatch: false)
+            } else {
+                LiveActivityBanner(context: context, isWatch: false)
+            }
+        }
+    }
+}
+
+@available(iOS 18.0, *) private struct LiveActivityBannerWrapperIOS18: View {
+    @Environment(\.activityFamily) private var activityFamily
+    @Environment(\.isActivityFullscreen) private var isActivityFullscreen
+    let context: ActivityViewContext<LiveActivityAttributes>
+
+    var body: some View {
+        let isWatch = activityFamily == .small
+        let isSupplementalMedium = activityFamily == .medium
+        let showChart = context.state.showChart && (!isWatch || context.state.watchChart)
+        if showChart {
+            LiveActivityChart(
+                context: context,
+                isWatch: isWatch,
+                isFullscreen: isActivityFullscreen || isSupplementalMedium
+            )
+        } else {
+            LiveActivityBanner(
+                context: context,
+                isWatch: isWatch,
+                isFullscreen: isActivityFullscreen,
+                isSupplementalMedium: isSupplementalMedium
+            )
+        }
+    }
+}
+
+private struct DynamicIslandCompactGlucoseView: View {
+    let context: ActivityViewContext<LiveActivityAttributes>
+    let showsTrend: Bool
+    var centersInLimitedWidth: Bool = false
+
+    var body: some View {
+        ZStack {
+            HStack(spacing: 1) {
+                Text(context.state.bg)
+                    .monospacedDigit()
+
+                if showsTrend, let direction = context.state.direction {
+                    Text(String(direction.prefix(1)))
+                        .scaleEffect(x: 0.75, y: 0.75, anchor: .leading)
+                        .foregroundStyle(direction.count > 1 ? .red : .primary)
+                }
+            }
+        }
+        .fontWidth(.compressed)
+        .lineLimit(1)
+        .minimumScaleFactor(0.65)
+        .frame(width: centersInLimitedWidth ? 34 : nil, alignment: .center)
+    }
+}
+
+@available(iOS 27.0, *) private struct DynamicIslandCompactLeadingViewIOS27: View {
+    @Environment(\.isDynamicIslandLimitedInWidth) private var isLimitedInWidth
+    let context: ActivityViewContext<LiveActivityAttributes>
+
+    var body: some View {
+        if isLimitedInWidth {
+            DynamicIslandCompactGlucoseView(
+                context: context,
+                showsTrend: false,
+                centersInLimitedWidth: true
+            )
+        } else {
+            HStack(spacing: 4) {
+                LoopCircle(context: context, compact: true, size: 12)
+                DynamicIslandCompactGlucoseView(context: context, showsTrend: true)
+            }
+        }
+    }
+}
+
+@available(iOS 27.0, *) private struct DynamicIslandCompactTrailingViewIOS27: View {
+    @Environment(\.isDynamicIslandLimitedInWidth) private var isLimitedInWidth
+    let context: ActivityViewContext<LiveActivityAttributes>
+
+    var body: some View {
+        if isLimitedInWidth {
+            LoopCircle(context: context, compact: true, size: 12)
+                .frame(width: 34, height: 20, alignment: .center)
+        } else {
+            compactDelta
+        }
+    }
+
+    private var compactDelta: some View {
+        Group {
+            if !context.state.change.isEmpty {
+                if !context.isStale {
+                    Text(context.state.change)
+                } else {
+                    Text("old").foregroundStyle(.secondary)
+                }
+            } else {
+                Text("--")
+            }
+        }
+        .lineLimit(1)
+        .minimumScaleFactor(0.7)
+        .padding(.trailing, 4)
+    }
+}
+
+private struct DynamicIslandMinimalGlucoseView: View {
+    let context: ActivityViewContext<LiveActivityAttributes>
+
+    var body: some View {
+        let direction = context.state.direction
+        let isLimitedInWidth = context.state.bg.count + (direction?.count ?? 0) > 5
+
+        HStack(spacing: -1) {
+            Text(context.state.bg)
+
+            if let direction {
+                Text(String(direction.prefix(isLimitedInWidth ? 1 : 2)))
+                    .scaleEffect(x: 0.7, y: 0.7, anchor: .leading)
+                    .foregroundStyle(direction.count > (isLimitedInWidth ? 1 : 2) ? .red : .primary)
+            }
+        }
+        .lineLimit(1)
+        .minimumScaleFactor(0.65)
+        .fontWidth(isLimitedInWidth ? .compressed : .condensed)
+        .padding(.leading, 7)
+        .padding(.trailing, 3)
+    }
+}
+
+struct LoopCircle: View {
+    let context: ActivityViewContext<LiveActivityAttributes>
+
+    let compact: Bool
+    let size: CGFloat
+
+    var body: some View {
+        let timeAgo = abs(context.state.loopDate.timeIntervalSinceNow) / 60
+        let color: Color = timeAgo > 12 ? .loopRed : timeAgo > 8 ? .loopYellow : .loopGreen
+
+        Circle()
+            .stroke(color, lineWidth: compact ? 1.5 : 3)
+            .frame(width: size, height: size)
+    }
+}
+
+struct BannerLoopCircle: View {
+    let context: ActivityViewContext<LiveActivityAttributes>
+    let size: CGFloat
+
+    var body: some View {
+        LoopCircle(context: context, compact: false, size: size)
+    }
+}
+
+struct TimestampLabel: View {
+    let context: ActivityViewContext<LiveActivityAttributes>
+
+    private static let dateFormatter: DateFormatter = {
+        var formatter = DateFormatter()
+        formatter.dateStyle = .none
+        formatter.timeStyle = .short
+        return formatter
+    }()
+
+    var body: some View {
+        Text(Self.dateFormatter.string(from: context.state.loopDate))
+    }
+}
+
+struct BannerTimestampLabel: View {
+    let context: ActivityViewContext<LiveActivityAttributes>
+
+    var body: some View {
+        TimestampLabel(context: context)
+            .font(.system(size: 14))
+            .foregroundStyle(.white.opacity(0.7))
+    }
+}
+
+struct WatchLoopCircleAndTimestamp: View {
+    let context: ActivityViewContext<LiveActivityAttributes>
+    var reversed: Bool = false
+
+    var body: some View {
+        HStack(spacing: 3) {
+            if reversed {
+                BannerTimestampLabel(context: context)
+                BannerLoopCircle(context: context, size: 9)
+                    .opacity(abs(context.state.loopDate.timeIntervalSinceNow) / 60 <= 8 ? 0.7 : 0.9)
+                    .padding(.leading, 2)
+            } else {
+                BannerLoopCircle(context: context, size: 9)
+                    .opacity(abs(context.state.loopDate.timeIntervalSinceNow) / 60 <= 8 ? 0.7 : 0.9)
+                    .padding(.trailing, 2)
+                BannerTimestampLabel(context: context)
+            }
+        }
+    }
+}
+
+struct WatchGlucoseDisplay: View {
+    let context: ActivityViewContext<LiveActivityAttributes>
+    private let decimalString: String = Locale.current.decimalSeparator ?? "."
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 6) {
+            let string = context.state.bg
+            let decimalSeparator = string.contains(decimalString) ? decimalString : "."
+            let decimal = string.components(separatedBy: decimalSeparator)
+            if decimal.count > 1 {
+                HStack(alignment: .firstTextBaseline, spacing: 0) {
+                    Text(decimal[0]).font(.system(size: 28, weight: .semibold, design: .rounded))
+                    Text(decimalSeparator).font(.system(size: 20, weight: .semibold, design: .rounded))
+                    Text(decimal[1]).font(.system(size: 20, weight: .semibold, design: .rounded))
+                }
+            } else {
+                Text(string)
+                    .font(.system(size: 28, weight: .semibold, design: .rounded))
+            }
+
+            if let direction = context.state.direction {
+                Text(direction)
+                    .font(.system(size: 16))
+            }
+        }
+        .foregroundStyle(Color.white)
+    }
+}
+
+struct WatchIOBCOBDisplay: View {
+    let context: ActivityViewContext<LiveActivityAttributes>
+
+    @ViewBuilder var body: some View {
+        HStack(spacing: 10) {
+            HStack(spacing: 0.5) {
+                Text(context.state.iob)
+                    .font(.system(size: 19))
+                    .tracking(-0.5)
+                    .foregroundStyle(.white)
+                Text("U")
+                    .font(.system(size: 19).smallCaps())
+                    .foregroundStyle(.white.opacity(0.7))
+            }
+            .fontWidth(.compressed)
+
+            if context.state.cob != "0" {
+                HStack(spacing: 0.5) {
+                    Text(context.state.cob)
+                        .font(.system(size: 19))
+                        .tracking(-0.5)
+                        .foregroundStyle(.white)
+                    Text("g")
+                        .font(.system(size: 19))
+                        .foregroundStyle(.white.opacity(0.7))
+                }
+                .fontWidth(.compressed)
+            }
+        }
+        .fixedSize(horizontal: true, vertical: false)
+    }
+}
+
+struct BannerEventualGlucose: View {
+    let context: ActivityViewContext<LiveActivityAttributes>
+
+    private let eventualSymbol = "⇢"
+
+    var body: some View {
+        HStack(spacing: 3) {
+            Text(eventualSymbol)
+                .opacity(0.7)
+            Text(context.state.eventual)
+                .opacity(0.8)
+                .fontWidth(.condensed)
+        }
+    }
+}
+
+private extension LiveActivityAttributes {
+    static var preview: LiveActivityAttributes {
+        LiveActivityAttributes(startDate: Date())
+    }
+}
+
+private extension LiveActivityAttributes.ContentState {
+    // 0 is the widest digit. Use this to get an upper bound on text width.
+
+    // Use mmol/l notation with decimal point as well for the same reason, it uses up to 4 characters, while mg/dl uses up to 3
+    static var testWide: LiveActivityAttributes.ContentState {
+        LiveActivityAttributes.ContentState(
+            bg: "10.7",
+            direction: "→",
+            change: "+0.1",
+            date: Date(),
+            iob: "1.2",
+            cob: "20",
+            loopDate: Date.now, eventual: "12.7", mmol: true,
+            readings: nil,
+            predictions: nil,
+            showChart: false,
+            watchChart: false,
+            watchPredictions: false,
+            watchDelta: true,
+            watchEventual: true,
+            chartLowThreshold: 75,
+            chartHighThreshold: 200
+        )
+    }
+
+    static var testVeryWide: LiveActivityAttributes.ContentState {
+        LiveActivityAttributes.ContentState(
+            bg: "10.7",
+            direction: "↑↑",
+            change: "+1.4",
+            date: Date(),
+            iob: "1.2",
+            cob: "20",
+            loopDate: Date.now, eventual: "12.7", mmol: true,
+            readings: nil,
+            predictions: nil,
+            showChart: false,
+            watchChart: false,
+            watchPredictions: false,
+            watchDelta: false,
+            watchEventual: true,
+            chartLowThreshold: 75,
+            chartHighThreshold: 200
+        )
+    }
+
+    static var testSuperWide: LiveActivityAttributes.ContentState {
+        LiveActivityAttributes.ContentState(
+            bg: "10.7",
+            direction: "↑↑↑",
+            change: "+2.1",
+            date: Date(),
+            iob: "1.2",
+            cob: "20",
+            loopDate: Date.now, eventual: "12.7", mmol: true,
+            readings: nil,
+            predictions: nil,
+            showChart: false,
+            watchChart: false,
+            watchPredictions: false,
+            watchDelta: true,
+            watchEventual: true,
+            chartLowThreshold: 75,
+            chartHighThreshold: 200
+        )
+    }
+
+    // 2 characters for BG, 1 character for change is the minimum that will be shown
+    static var testNarrow: LiveActivityAttributes.ContentState {
+        LiveActivityAttributes.ContentState(
+            bg: "10.7",
+            direction: "↑",
+            change: "+0.7",
+            date: Date(),
+            iob: "1.2",
+            cob: "20",
+            loopDate: Date.now, eventual: "12.7", mmol: true,
+            readings: nil,
+            predictions: nil,
+            showChart: false,
+            watchChart: false,
+            watchPredictions: false,
+            watchDelta: false,
+            watchEventual: true,
+            chartLowThreshold: 75,
+            chartHighThreshold: 200
+        )
+    }
+
+    static var testMedium: LiveActivityAttributes.ContentState {
+        LiveActivityAttributes.ContentState(
+            bg: "10.7",
+            direction: "↗︎",
+            change: "+0.8",
+            date: Date(),
+            iob: "1.2",
+            cob: "20",
+            loopDate: Date.now, eventual: "12.7", mmol: true,
+            readings: nil,
+            predictions: nil,
+            showChart: false,
+            watchChart: false,
+            watchPredictions: false,
+            watchDelta: true,
+            watchEventual: true,
+            chartLowThreshold: 75,
+            chartHighThreshold: 200
+        )
+    }
+
+    static var chart1: LiveActivityAttributes.ContentState {
+        let sampleData = SampleData()
+        return LiveActivityAttributes.ContentState(
+            bg: "10.7",
+            direction: "→",
+            change: "+0.1",
+            date: Date(),
+            iob: "-0.2",
+            cob: "20",
+            loopDate: Date.now, eventual: "12.7", mmol: true,
+            readings: sampleData.sampleReadings,
+            predictions: sampleData.samplePredictions,
+            showChart: true,
+            watchChart: false,
+            watchPredictions: false,
+            watchDelta: false,
+            watchEventual: true,
+            chartLowThreshold: 75,
+            chartHighThreshold: 200
+        )
+    }
+
+    static var chart2: LiveActivityAttributes.ContentState {
+        let sampleData = SampleData()
+        return LiveActivityAttributes.ContentState(
+            bg: "13.7",
+            direction: "↑↑",
+            change: "+1.4",
+            date: Date(),
+            iob: "1.2",
+            cob: "20",
+            loopDate: Date.now, eventual: "12.7", mmol: true,
+            readings: sampleData.sampleReadings,
+            predictions: nil,
+            showChart: true,
+            watchChart: true,
+            watchPredictions: true,
+            watchDelta: true,
+            watchEventual: true,
+            chartLowThreshold: 75,
+            chartHighThreshold: 200
+        )
+    }
+
+    static var chart3: LiveActivityAttributes.ContentState {
+        let sampleData = SampleData()
+        return LiveActivityAttributes.ContentState(
+            bg: "71",
+            direction: "↓↓",
+            change: "-1.4",
+            date: Date(),
+            iob: "1.2",
+            cob: "20",
+            loopDate: Date.now, eventual: "12.7", mmol: true,
+            readings: sampleData.sampleReadings,
+            predictions: nil,
+            showChart: true,
+            watchChart: true,
+            watchPredictions: true,
+            watchDelta: false,
+            watchEventual: false,
+            chartLowThreshold: 75,
+            chartHighThreshold: 200
+        )
+    }
+
+    static var chart4: LiveActivityAttributes.ContentState {
+        let sampleData = SampleData()
+        return LiveActivityAttributes.ContentState(
+            bg: "10.7",
+            direction: "↗︎",
+            change: "+0.1",
+            date: Date(),
+            iob: "1.2",
+            cob: "20",
+            loopDate: Date.now, eventual: "12.7", mmol: true,
+            readings: sampleData.sampleReadings,
+            predictions: sampleData.samplePredictions,
+            showChart: true,
+            watchChart: true,
+            watchPredictions: true,
+            watchDelta: true,
+            watchEventual: true,
+            chartLowThreshold: 75,
+            chartHighThreshold: 200
+        )
+    }
+
+    static var chart5: LiveActivityAttributes.ContentState {
+        let sampleData = SampleData()
+        return LiveActivityAttributes.ContentState(
+            bg: "10.7",
+            direction: "↘︎",
+            change: "+0.1",
+            date: Date(),
+            iob: "-0.5",
+            cob: "120",
+            loopDate: Date.now, eventual: "12.7", mmol: true,
+            readings: sampleData.sampleReadings,
+            predictions: sampleData.samplePredictions,
+            showChart: true,
+            watchChart: true,
+            watchPredictions: false,
+            watchDelta: false,
+            watchEventual: false,
+            chartLowThreshold: 75,
+            chartHighThreshold: 200
+        )
+    }
+
+    static var chart6: LiveActivityAttributes.ContentState {
+        let sampleData = SampleData()
+        return LiveActivityAttributes.ContentState(
+            bg: "9.2",
+            direction: "↑",
+            change: "+0.6",
+            date: Date(),
+            iob: "2.1",
+            cob: "45",
+            loopDate: Date.now, eventual: "11.4", mmol: true,
+            readings: sampleData.sampleReadings,
+            predictions: sampleData.samplePredictions,
+            showChart: true,
+            watchChart: true,
+            watchPredictions: false,
+            watchDelta: true,
+            watchEventual: true,
+            chartLowThreshold: 75,
+            chartHighThreshold: 200
+        )
+    }
+}
+
+struct SampleData {
+    let sampleReadings: LiveActivityAttributes.ValueSeries
+    let samplePredictions: LiveActivityAttributes.ActivityPredictions
+
+    init() {
+        let calendar = Calendar.current
+        let now = Date.now
+
+        let readingDates = Array((0 ..< 2 * 12).map { minutesAgoX5 in
+            calendar.date(byAdding: .minute, value: -minutesAgoX5 * 5, to: now)!
+        }.reversed())
+
+        var current = 120 + Int.random(in: 0 ... 100)
+        let readingValues: [Int16] = Array((0 ..< 2 * 12).map { _ in
+            current = current + Int.random(in: 10 ... 20) * Int.random(in: -50 ... 50).signum()
+            if current < 60 {
+                current = 60 + Int.random(in: 0 ... 10)
+            }
+            return Int16(clamping: current)
+        }.reversed())
+
+        sampleReadings = LiveActivityAttributes.ValueSeries(
+            dates: readingDates,
+            values: readingValues
+        )
+
+        let lastGlucose = Double(readingValues.last!)
+        let lastDate = readingDates.last!
+
+        let numberOfPoints = 2 * 60 / 5 // 2 hours with 5-minute steps
+
+        // Helper function to generate a curve with some randomness
+        func generateCurve(startValue: Double, pattern: String) -> LiveActivityAttributes.ValueSeries {
+            var values: [Double] = []
+            var currentValue = startValue
+
+            let midpoint = Double(numberOfPoints) / 2
+
+            for i in 0 ..< numberOfPoints {
+                let noise = Double.random(in: -5 ... 5)
+                switch pattern {
+                case "up":
+                    currentValue += Double.random(in: 5 ... 15) + noise
+                    if currentValue > 400 {
+                        currentValue = 400 - Double.random(in: 0 ... 15)
+                    }
+                case "down":
+                    currentValue -= Double.random(in: 5 ... 15) + noise
+                    if currentValue < 20 {
+                        currentValue = 20 + Double.random(in: 0 ... 15)
+                    }
+                case "peak":
+                    let distance = abs(Double(i) - midpoint)
+                    let trend = distance < midpoint / 2 || currentValue > 300 ? -1.0 : 1.0
+                    let delta = Double.random(in: 5 ... 20)
+                    currentValue += delta * trend + noise
+                default:
+                    currentValue += noise
+                }
+                values.append(currentValue)
+            }
+
+            let dates = values.enumerated().map { index, _ in
+                lastDate.addingTimeInterval(TimeInterval((index + 1) * 5 * 60))
+            }
+
+            return LiveActivityAttributes.ValueSeries(dates: dates, values: values.map {
+                Int16(clamping: Int(round($0)))
+            })
+        }
+
+        let iob = generateCurve(startValue: lastGlucose, pattern: "down")
+        let zt = generateCurve(startValue: lastGlucose, pattern: "stable")
+        let cob = generateCurve(startValue: lastGlucose, pattern: "peak")
+        let uam = generateCurve(startValue: lastGlucose, pattern: "up")
+
+        samplePredictions = LiveActivityAttributes.ActivityPredictions(
+            iob: iob,
+            zt: zt,
+            cob: cob,
+            uam: uam
+        )
+    }
+}
+
+#Preview("Notification", as: .content, using: LiveActivityAttributes.preview) {
+    LiveActivity()
+} contentStates: {
+    LiveActivityAttributes.ContentState.testSuperWide
+    LiveActivityAttributes.ContentState.testVeryWide
+    LiveActivityAttributes.ContentState.testWide
+    LiveActivityAttributes.ContentState.testMedium
+    LiveActivityAttributes.ContentState.testNarrow
+    LiveActivityAttributes.ContentState.chart1
+    LiveActivityAttributes.ContentState.chart2
+    LiveActivityAttributes.ContentState.chart3
+    LiveActivityAttributes.ContentState.chart4
+    LiveActivityAttributes.ContentState.chart5
+}
+
+#Preview("Dynamic Island Compact", as: .dynamicIsland(.compact), using: LiveActivityAttributes.preview) {
+    LiveActivity()
+} contentStates: {
+    LiveActivityAttributes.ContentState.testSuperWide
+    LiveActivityAttributes.ContentState.chart5
+}
+
+#Preview("Dynamic Island Minimal", as: .dynamicIsland(.minimal), using: LiveActivityAttributes.preview) {
+    LiveActivity()
+} contentStates: {
+    LiveActivityAttributes.ContentState.testSuperWide
+    LiveActivityAttributes.ContentState.testVeryWide
+}
+
+#Preview("Dynamic Island Expanded", as: .dynamicIsland(.expanded), using: LiveActivityAttributes.preview) {
+    LiveActivity()
+} contentStates: {
+    LiveActivityAttributes.ContentState.testSuperWide
+    LiveActivityAttributes.ContentState.chart5
+}

@@ -1,0 +1,175 @@
+import Foundation
+import LoopKitUI
+import SwiftDate
+
+extension Home {
+    final class Provider: BaseProvider, HomeProvider {
+        @Injected() var appCoordinator: AppCoordinator!
+        @Injected() var apsManager: APSManager!
+        @Injected() var glucoseStorage: GlucoseStorage!
+        @Injected() var pumpHistoryStorage: PumpHistoryStorage!
+        @Injected() var tempTargetsStorage: TempTargetsStorage!
+        @Injected() var carbsStorage: CarbsStorage!
+        @Injected() var announcementStorage: AnnouncementsStorage!
+
+        let overrideStorage = OverrideStorage()
+        let coreDateStorage = CoreDataStorage()
+
+        var suggestion: Suggestion? {
+            storage.retrieve(OpenAPS.Enact.suggested, as: Suggestion.self)
+        }
+
+        var dynamicVariables: DynamicVariables? {
+            storage.retrieve(OpenAPS.Monitor.dynamicVariables, as: DynamicVariables.self)
+        }
+
+        func fetchedMeals(_ interval: NSDate) -> [Meals] {
+            coreDateStorage.fetchMealData(
+                interval: interval
+            )
+        }
+
+        func overrides() -> [Override] {
+            overrideStorage.fetchOverrides(interval: DateFilter.day.startDate)
+        }
+
+        func latestOverride() -> Override? {
+            overrideStorage.fetchLatestOverride().first
+        }
+
+        func consecutiveOverride(_ id: String) -> OverridePresets? {
+            guard let preset = overrideStorage.fetchPreset(id: id) else { return nil }
+            return preset
+        }
+
+        func overrideHistory() -> [OverrideHistory] {
+            overrideStorage.fetchOverrideHistory(interval: DateFilter.day.startDate)
+        }
+
+        var enactedSuggestion: Suggestion? {
+            storage.retrieve(OpenAPS.Enact.enacted, as: Suggestion.self)
+        }
+
+        func iob() async throws -> Decimal? {
+            await apsManager.iobSync()
+        }
+
+        func reasons() -> [IOBData]? {
+            let reasons = coreDateStorage.fetchReasons(interval: DateFilter.day.startDate)
+
+            guard reasons.count > 3 else {
+                return nil
+            }
+
+            return reasons.compactMap {
+                entry -> IOBData in
+                IOBData(
+                    date: entry.date ?? Date(),
+                    iob: (entry.iob ?? 0) as Decimal,
+                    cob: (entry.cob ?? 0) as Decimal
+                )
+            }
+        }
+
+        func pumpTimeZone() -> TimeZone? {
+            deviceManager.pumpManager?.status.timeZone
+        }
+
+        func heartbeatNow() {
+            appCoordinator.sendHeartbeat()
+        }
+
+        func filteredGlucose(hours: Int) -> [BloodGlucose] {
+            let now = Date()
+            // .retrieve() will read glucose from storage and apply smoothing if needed
+            return glucoseStorage.retrieve().filter {
+                $0.dateString.addingTimeInterval(hours.hours.timeInterval) > now
+            }
+        }
+
+        func manualGlucose(hours: Int) -> [BloodGlucose] {
+            let now = Date()
+            return glucoseStorage.retrieve().filter {
+                $0.type == GlucoseType.manual.rawValue &&
+                    $0.dateString.addingTimeInterval(hours.hours.timeInterval) > now
+            }
+        }
+
+        func pumpHistory(hours: Int) -> [PumpHistoryEvent] {
+            let now = Date()
+            return pumpHistoryStorage.recent().filter {
+                $0.timestamp.addingTimeInterval(hours.hours.timeInterval) > now
+            }
+        }
+
+        func tempTargets(hours: Int) -> [TempTarget] {
+            let now = Date()
+            return tempTargetsStorage.recent().filter {
+                $0.createdAt.addingTimeInterval(hours.hours.timeInterval) > now
+            }
+        }
+
+        func tempTarget() -> TempTarget? {
+            tempTargetsStorage.current()
+        }
+
+        func carbs(hours: Int) -> [CarbsEntry] {
+            let now = Date()
+            return carbsStorage.recent().filter {
+                $0.createdAt.addingTimeInterval(hours.hours.timeInterval) > now && $0.carbs > 0
+            }
+        }
+
+        func announcement(_ hours: Int) -> [Announcement] {
+            let now = Date()
+            return announcementStorage.validate().filter {
+                $0.createdAt.addingTimeInterval(hours.hours.timeInterval) > now
+            }
+        }
+
+        func pumpSettings() -> PumpSettings {
+            storage.retrieve(OpenAPS.Settings.settings, as: PumpSettings.self)
+                ?? PumpSettings(from: OpenAPS.defaults(for: OpenAPS.Settings.settings))
+                ?? PumpSettings(insulinActionCurve: 6, maxBolus: 10, maxBasal: 4)
+        }
+
+        func pumpBattery() -> Battery? {
+            storage.retrieve(OpenAPS.Monitor.battery, as: Battery.self)
+        }
+
+        func pumpReservoir() -> Decimal? {
+            // Read live from the pump manager first (same as pumpReservoirCapacity).
+            // The persisted reservoir is only overwritten when a pump callback
+            // fires, so right after a pod change it still holds the *old* pod's
+            // last value — e.g. 4 U, doubled to a misleading "8" under U200 on a
+            // fresh > 50 U pod. The live pod reports the > 50 U sentinel instead,
+            // which renders as a full pod. KnownPlugins.pumpReservoir returns nil
+            // for tethered pumps (Dana, Medtronic), so they keep the stored value.
+            if let pumpManager = deviceManager.pumpManager,
+               let live = KnownPlugins.pumpReservoir(pumpManager)
+            {
+                return live
+            }
+            return storage.retrieve(OpenAPS.Monitor.reservoir, as: Decimal.self)
+        }
+
+        // Read live from the pump manager (the reservoir number itself is stored,
+        // but the model-dependent capacity isn't): Medtrum Nano comes in 200 U and
+        // 300 U variants, so the Aurora silhouette fill needs the real capacity.
+        func pumpReservoirCapacity() -> Decimal? {
+            guard let pumpManager = deviceManager.pumpManager else { return nil }
+            return KnownPlugins.pumpReservoirCapacity(pumpManager)
+        }
+
+        func autotunedBasalProfile() -> [BasalProfileEntry] {
+            storage.retrieve(OpenAPS.Settings.profile, as: Autotune.self)?.basalProfile
+                ?? storage.retrieve(OpenAPS.Settings.pumpProfile, as: Autotune.self)?.basalProfile
+                ?? [BasalProfileEntry(start: "00:00", minutes: 0, rate: 1)]
+        }
+
+        func basalProfile() -> [BasalProfileEntry] {
+            storage.retrieve(OpenAPS.Settings.pumpProfile, as: Autotune.self)?.basalProfile
+                ?? [BasalProfileEntry(start: "00:00", minutes: 0, rate: 1)]
+        }
+    }
+}
