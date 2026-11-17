@@ -9,7 +9,7 @@
 	url = https://github.com/Artificial-Pancreas/G7SensorKit.git
 [submodule "CGMBLEKit"]
 	path = CGMBLEKit
-	url = https://github.com/holger2de/CGMBLEKit.git
+	url = https://github.com/holger2de/CGMBLEKit-G6-Public.git
 [submodule "MinimedKit"]
 	path = MinimedKit
 	url = https://github.com/Artificial-Pancreas/MinimedKit.git
