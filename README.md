@@ -36,33 +36,42 @@ cd iAPS-Aurora-G6-Public
 
 -----
 
-## Get Started with iAPS
+## Get Started with this Aurora G6 Snapshot
 
-Ready to explore iAPS? Here's how you can download and build the repository:
+To build and review the Aurora Dexcom G6 development snapshot, clone **this repository** with all submodules:
 
-### Download the Repo
+### Clone and open in Xcode
 
-  * **Using Terminal:**
+```bash
+git clone --recurse-submodules https://github.com/holger2de/iAPS-Aurora-G6-Public.git
+cd iAPS-Aurora-G6-Public
+xed .
+```
 
-    clone and open workspace project in Xcode
-    ```bash
-    git clone --recurse-submodules --branch=dev https://github.com/artificial-pancreas/iaps.git && cd iaps && xed .
-    ```
-### Update the submodules in your local (old) clone 
+### Update submodules in an existing clone
 
-  * **Using Terminal:**
-  * 
-    ```bash
-    git submodule update --recursive
-    ```
+```bash
+git submodule update --init --recursive
+```
 
-### Update the iaps project in your local clone 
+### Update this public snapshot
 
-  * **Using Terminal:**
-  * 
-    ```bash
-    git pull
-    ```
+```bash
+git pull
+git submodule update --init --recursive
+```
+
+### Upstream iAPS
+
+This repository is based on iAPS and is **not the official upstream project**.
+
+Official upstream repository:
+
+```text
+https://github.com/Artificial-Pancreas/iAPS
+```
+
+Use the upstream repository for the current official iAPS development branch and general project history.
   
 ### Build Without Xcode (Directly in GitHub)
 
