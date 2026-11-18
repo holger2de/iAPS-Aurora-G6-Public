@@ -40,13 +40,13 @@
 	branch = dev
 [submodule "LibreLoop"]
 	path = LibreLoop
-	url = https://github.com/holger2de/LibreLoop-Aurora.git
+	url = https://github.com/holger2de/LibreLoop-Aurora-Public.git
 [submodule "LibreCRKit"]
 	path = LibreCRKit
-	url = https://github.com/holger2de/LibreCRKit-Aurora.git
+	url = https://github.com/holger2de/LibreCRKit-Aurora-Public.git
 [submodule "LoopAlgorithm"]
 	path = LoopAlgorithm
-	url = https://github.com/holger2de/LoopAlgorithm-Aurora.git
+	url = https://github.com/holger2de/LoopAlgorithm-Aurora-Public.git
 [submodule "EversenseKit"]
 	path = EversenseKit
 	url = https://github.com/Artificial-Pancreas/EversenseKit
