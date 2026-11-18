@@ -2,6 +2,38 @@
 
 iAPS is an advanced artificial pancreas system for iOS, built upon the foundation of Ivan Valkou's original `freeaps.git` Swift repository and powered by the **OpenAPS Reference (Master 0.7.1)** algorithms. After thousands of commits and the addition of many unique features, the app has been rebranded as iAPS under the new organization, Artificial Pancreas. We also leverage numerous frameworks published by the **Loop community** to bring you this robust system.
 
+
+-----
+
+## Aurora Dexcom G6 Direct Controls — Experimental Snapshot
+
+This repository is a public snapshot of the Aurora Dexcom G6 development work. It is intended for code review, testing, and collaboration and is **not an official upstream iAPS release**.
+
+The G6-specific work in this snapshot includes:
+
+* **Direct Dexcom G6 sensor start** from iAPS using a valid 4-digit sensor code.
+* **Direct sensor stop** from iAPS.
+* **Direct calibration** from iAPS.
+* **Transmitter change/setup** for 6-character G6 transmitter IDs.
+* **Passive-mode coexistence** with the Dexcom app. Normal operation can remain passive while start, stop, and calibration use a temporary one-shot active command cycle.
+* **Anubis support** retained.
+* **Warmup countdown on the iAPS home screen**, derived from the actual sensor-session start time and restored after an app restart.
+  * Standard G6 warmup: **120 minutes**
+  * Anubis warmup: **50 minutes**
+* Automatic return from the warmup countdown to the normal sensor-age display when warmup completes.
+
+The G6 implementation uses the public snapshot of **CGMBLEKit-G6-Public** referenced as a Git submodule.
+
+Clone this snapshot with all required submodules:
+
+```bash
+git clone --recurse-submodules https://github.com/holger2de/iAPS-Aurora-G6-Public.git
+cd iAPS-Aurora-G6-Public
+```
+
+> **Experimental:** This code controls CGM session commands and is still being tested with real sensor changes. Review and test carefully before relying on it.
+
+
 -----
 
 ## Get Started with iAPS
